@@ -1,0 +1,10 @@
+.env
+venv/
+.quarto/
+sample_quarto/
+python_files/
+*.tex
+*.html
+*.pdf
+*.pptx
+*.ppt
