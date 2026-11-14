@@ -1,27 +1,147 @@
 ---
-title: "matplotlib demo"
+title: "Report EDA Fraud"
 format:
-  html:
-    code-fold: true
-jupyter: python3
+  pptx:
+    reference-doc: template.pptx
+execute:
+  echo: false
 ---
 
-For a demonstration of a line plot on a polar axis, see @fig-polar.
 
+## Distribution of Fraud
+:::: {.columns}
+
+::: {.column width="65%"}
 ```{python}
-#| label: fig-polar
-#| fig-cap: "A line plot on a polar axis"
+#| fig-width: 7
+#| fig-height: 4
 
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 
-r = np.arange(0, 2, 0.01)
-theta = 2 * np.pi * r
-fig, ax = plt.subplots(
-  subplot_kw = {'projection': 'polar'} 
-)
-ax.plot(theta, r)
-ax.set_rticks([0.5, 1, 1.5, 2])
-ax.grid(True)
+df = pd.read_csv("dataset/credit_card_fraud_detection_2026.csv")
+
+counts = df['is_fraud'].value_counts().sort_index()
+labels = ['Non-Fraud', 'Fraud']
+pct = counts / counts.sum() * 100
+
+fig, ax = plt.subplots(figsize=(7, 4))
+bars = ax.bar(labels, counts.values, color=['#4C72B0', '#C44E52'])
+
+for bar, n, p in zip(bars, counts.values, pct.values):
+    ax.text(
+        bar.get_x() + bar.get_width() / 2,
+        bar.get_height(),
+        f"{n:,}\n({p:.2f}%)",
+        ha='center',
+        va='bottom'
+    )
+
+ax.set_title("Distribusi Fraud")
+ax.set_ylabel("Jumlah transaksi")
+ax.spines[['top', 'right']].set_visible(False)
+ax.set_ylim(0, counts.max() * 1.15)
+
 plt.show()
 ```
+:::
+::: {.column width="35%"}
+- Fraud pada dataset ini sangat imbalanced.
+- Hanya sekitar **2–3%** dari seluruh populasi merupakan transaksi fraud.
+- Mayoritas transaksi merupakan non-fraud.
+:::
+::: {.notes}
+- Impact lost ini terhadap perusahaan tergolong kecil karena blalblabla
+:::
+::::
+
+## Amount Distribution
+:::: {.columns}
+
+::: {.column width="65%"}
+```{python}
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+
+df = pd.read_csv("dataset/credit_card_fraud_detection_2026.csv")
+
+fraud_data = df.loc[df["is_fraud"] == 1]
+
+# Calculate statistics
+median_loss = fraud_data["fraud_amount_lost"].median()
+mode_loss = fraud_data["fraud_amount_lost"].mode().iloc[0]
+max_loss = fraud_data['fraud_amount_lost'].quantile(0.75)
+
+# Visualization
+fig, ax = plt.subplots(figsize=(12, 6))
+
+sns.histplot(
+    data=fraud_data,
+    x="fraud_amount_lost",
+    bins=40,
+    kde=True,
+    color="#E76F51",
+    edgecolor="white",
+    alpha=0.8,
+    ax=ax
+)
+
+# Mode line
+ax.axvline(
+    mode_loss,
+    color="#2A9D8F",
+    linestyle="--",
+    linewidth=2.2,
+    label=f"Mode: ${mode_loss:,.2f}"
+)
+
+# Median line
+ax.axvline(
+    median_loss,
+    color="#264653",
+    linestyle="-.",
+    linewidth=2.2,
+    label=f"Median: ${median_loss:,.2f}"
+)
+
+ax.axvline(
+    max_loss,
+    color="#FF392E",
+    linestyle="--",
+    linewidth=2.2,
+    label=f"Percentile 75: ${max_loss:,.2f}"
+)
+
+# Titles and labels
+ax.set_title(
+    "Distribution of Fraud Amount Lost",
+    fontsize=16,
+    fontweight="bold",
+    pad=15
+)
+
+ax.set_xlabel("Fraud Amount Lost ($)", fontsize=12)
+ax.set_ylabel("Number of Fraud Transactions", fontsize=12)
+
+# Styling
+ax.grid(axis="y", linestyle="--", alpha=0.3)
+ax.legend(
+    loc="upper right",
+    frameon=False,
+    fontsize=11
+)
+
+sns.despine()
+plt.tight_layout()
+plt.show()
+```
+:::
+
+::: {.column width="35%" align=center}
+- Distribusi kerugian paling banyak berada pada $ 50 dengan
+- Kerugian terbesar hingga $ 4000
+:::
+::::
