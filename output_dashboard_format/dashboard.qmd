@@ -1,0 +1,296 @@
+---
+title: "Fraud Dashboard"
+format:
+  dashboard:
+    orientation: rows
+    scrolling: false
+    theme: cosmo
+    css: style.css
+
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{python}
+#| include: false
+
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from pathlib import Path
+
+# ==========================================
+# 1. LOAD DATASET
+# ==========================================
+
+cwd = Path.cwd()
+
+candidates = [
+    cwd / "dataset" / "credit_card_fraud_detection_2026.csv",
+    cwd.parent / "dataset" / "credit_card_fraud_detection_2026.csv",
+    cwd.parent.parent / "dataset" / "credit_card_fraud_detection_2026.csv"
+]
+
+DATASET_PATH = next(
+    (p for p in candidates if p.exists()),
+    None
+)
+
+if DATASET_PATH is None:
+    raise FileNotFoundError("Dataset tidak ditemukan.")
+
+df = pd.read_csv(DATASET_PATH)
+
+# ==========================================
+# 2. DETECT COLUMNS
+# ==========================================
+
+
+def find_col(candidates):
+    lookup = {str(c).lower(): c for c in df.columns}
+
+    for name in candidates:
+        if name.lower() in lookup:
+            return lookup[name.lower()]
+
+    return None
+
+
+date_col = find_col([
+    "transaction_datetime"
+])
+
+fraud_col = find_col([
+    "is_fraud"
+])
+
+country_col = find_col([
+
+    "merchant_country"])
+
+if not all([date_col, fraud_col, country_col]):
+    raise ValueError(
+        f"Kolom tidak lengkap. Kolom tersedia: {df.columns.tolist()}"
+    )
+
+# ==========================================
+# 3. PREPROCESSING
+# ==========================================
+
+df[date_col] = pd.to_datetime(
+    df[date_col],
+    errors="coerce"
+)
+
+if (
+    pd.api.types.is_numeric_dtype(df[fraud_col])
+    or pd.api.types.is_bool_dtype(df[fraud_col])
+):
+    df["fraud"] = (
+        pd.to_numeric(df[fraud_col], errors="coerce")
+        .fillna(0)
+        .eq(1)
+    )
+else:
+    df["fraud"] = (
+        df[fraud_col]
+        .astype(str)
+        .str.lower()
+        .str.strip()
+        .isin(["1"])
+    )
+
+df["country"] = (
+    df[country_col]
+    .fillna("Unknown")
+    .astype(str)
+)
+
+df["month"] = df[date_col].dt.to_period("M")
+
+# ==========================================
+# 4. KPI
+# ==========================================
+
+total_transactions = len(df)
+
+total_fraud = int(df["fraud"].sum())
+
+total_non_fraud = total_transactions - total_fraud
+
+# ==========================================
+# 5. MONTHLY TREND
+# ==========================================
+
+monthly = (
+    df.dropna(subset=[date_col])
+    .groupby(["month", "fraud"])
+    .size()
+    .unstack(fill_value=0)
+    .reindex(columns=[False, True], fill_value=0)
+    .rename(columns={
+        False: "Non-Fraud",
+        True: "Fraud"
+    })
+    .sort_index()
+)
+
+monthly.index = monthly.index.astype(str)
+
+# ==========================================
+# 6. TOP COUNTRIES
+# ==========================================
+
+top_countries = (
+    df.groupby("country")
+    .size()
+    .nlargest(10)
+    .sort_values()
+    .reset_index(name="transactions")
+)
+
+# ==========================================
+# 7. FRAUD HEATMAP
+# ==========================================
+
+top_fraud_countries = (
+    df[df["fraud"]]
+    .groupby("country")
+    .size()
+    .nlargest(10)
+    .index
+)
+
+heatmap_data = (
+    df[df["fraud"] & df[date_col].notna()]
+    .groupby(["country", "month"])
+    .size()
+    .unstack(fill_value=0)
+    .reindex(index=top_fraud_countries, fill_value=0)
+    .sort_index(axis=1)
+)
+
+heatmap_data.columns = heatmap_data.columns.astype(str)
+
+# ==========================================
+# 8. VALIDATION
+# ==========================================
+
+assert total_transactions == total_fraud + total_non_fraud
+assert len(top_countries) <= 10
+assert len(heatmap_data) <= 10
+
+print("========== VALIDATION SUCCESS ==========")
+print(f"Dataset           : {DATASET_PATH}")
+print(f"Total Transactions: {total_transactions:,}")
+print(f"Total Fraud       : {total_fraud:,}")
+print(f"Total Non-Fraud   : {total_non_fraud:,}")
+print(f"Top Countries     : {len(top_countries)}")
+print(f"Heatmap Shape     : {heatmap_data.shape}")
+print("========================================")
+```
+
+## Row {height="15%"}
+
+### Total Transactions
+
+```{python}
+#| content: valuebox
+#| title: "Total Transactions"
+#| color: primary
+
+{"value": f"{total_transactions:,}"}
+```
+
+### Fraud Transactions
+
+```{python}
+#| content: valuebox
+#| title: "Fraud Transactions"
+#| color: danger
+
+{"value": f"{total_fraud:,}"}
+```
+
+## Row {height="35%"}
+
+### Monthly Fraud vs Non-Fraud
+
+```{python}
+#| title: "Monthly Transaction Trend"
+
+fig_trend = go.Figure()
+
+fig_trend.add_trace(
+    go.Scatter(
+        x=monthly.index,
+        y=monthly["Non-Fraud"],
+        name="Non-Fraud",
+        mode="lines+markers",
+        line=dict(color="#3984C6", width=2),
+        yaxis="y"
+    )
+)
+
+fig_trend.add_trace(
+    go.Scatter(
+        x=monthly.index,
+        y=monthly["Fraud"],
+        name="Fraud",
+        mode="lines+markers",
+        line=dict(color="#D9534F", width=2),
+        yaxis="y2"
+    )
+)
+```
+
+## Row {height="50%"}
+
+### Column {width="40%"}
+
+#### Top 10 Countries
+
+```{python}
+fig_country = px.bar(
+    top_countries,
+    x="transactions",
+    y="country",
+    orientation="h",
+    color="transactions",
+    color_continuous_scale="Blues",
+    labels={
+        "transactions": "Total Transactions",
+        "country": "Country"
+    }
+)
+
+
+fig_country
+```
+
+### Column {width="60%"}
+
+#### Monthly Fraud Heatmap
+
+```{python}
+fig_heatmap = go.Figure(
+    data=go.Heatmap(
+        z=heatmap_data.values,
+        x=heatmap_data.columns.tolist(),
+        y=heatmap_data.index.tolist(),
+        colorscale="Reds",
+        colorbar=dict(title="Fraud Count"),
+        hovertemplate=(
+            "Country: %{y}<br>"
+            "Month: %{x}<br>"
+            "Fraud: %{z}<extra></extra>"
+        )
+    )
+)
+
+
+fig_heatmap
+```

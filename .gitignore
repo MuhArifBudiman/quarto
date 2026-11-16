@@ -9,3 +9,8 @@ python_files/
 *.pptx
 *.ppt
 /.ipynb_checkpoints/
+__pycache__/
+/.quarto/
+**/*.quarto_ipynb
+project_demo/dataset/
+dataset/

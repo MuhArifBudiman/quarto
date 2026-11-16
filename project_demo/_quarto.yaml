@@ -1,0 +1,13 @@
+project:
+  type: default
+  output-dir: _output
+  render:
+    - demo_format_ppt.qmd
+    - demo_sample_python.py
+  post-render:
+    - demo_run_parameter_report.py
+
+execute:
+  echo: false
+  warning: false
+  freeze: auto

@@ -1,0 +1,327 @@
+---
+title: "Report Analisis EDA"
+format:
+  pptx:
+    reference-doc: template.pptx
+execute:
+  echo: false
+  warning: false
+author: "Muhammad Arif Budiman"
+date: 18 November 2026
+---
+
+```{python}
+#| tags: [parameters]
+country = "Australia"
+```
+
+```{python}
+#| include: false
+import os
+from pathlib import Path
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from matplotlib.ticker import PercentFormatter
+
+DIR_FILE = Path.cwd()
+ROOT_DIR = os.path.dirname(DIR_FILE)
+DATASET_PATH = os.path.join(
+    ROOT_DIR, "dataset", "credit_card_fraud_detection_2026.csv")
+
+df_all = pd.read_csv(DATASET_PATH)
+df = df_all[df_all["merchant_country"] == country].copy()
+assert len(df) > 0, f"Tidak ada data untuk {country}"
+
+fraud_data = df.loc[df["is_fraud"] == 1]
+n_total, n_fraud = len(df), int(df["is_fraud"].sum())
+rate = n_fraud / n_total
+baseline = df_all["is_fraud"].mean()   # baseline global (semua negara)
+MIN_N = 30                             # segmen < 30 transaksi tidak ditampilkan
+
+sns.set_theme(style="whitegrid")
+plt.rcParams["axes.spines.top"] = False
+plt.rcParams["axes.spines.right"] = False
+
+def bullets(*lines):
+    print("\n".join(f"- {l}" for l in lines))
+
+def wilson(k, n, z=1.96):
+    p = k / n
+    d = 1 + z**2 / n
+    c = (p + z**2 / (2 * n)) / d
+    h = z * np.sqrt(p * (1 - p) / n + z**2 / (4 * n**2)) / d
+    return c - h, c + h
+
+def rate_table(data, col, min_n=MIN_N):
+    g = (data.groupby(col, observed=True)
+         .agg(n=("is_fraud", "size"), fraud=("is_fraud", "sum"))
+         .reset_index())
+    g = g[g["n"] >= min_n].copy()
+    g["rate"] = g["fraud"] / g["n"]
+    g["lift"] = g["rate"] / baseline
+    g["lo"], g["hi"] = wilson(g["fraud"], g["n"])
+    return g
+
+def plot_rate(g, col, title, figsize=(7, 4), fs=9):
+    g = g.sort_values("rate", ascending=False)
+    fig, ax = plt.subplots(figsize=figsize)
+    sns.barplot(data=g, y=col, x="rate", order=g[col].tolist(),
+                color="#4C72B0", ax=ax)
+    ax.errorbar(g["rate"].values, np.arange(len(g)),
+                xerr=[(g["rate"] - g["lo"]).values,
+                      (g["hi"] - g["rate"]).values],
+                fmt="none", ecolor="black", capsize=2, lw=1)
+    ax.axvline(baseline, ls="--", color="#C44E52",
+               label=f"Baseline global {baseline:.2%}")
+    ax.xaxis.set_major_formatter(PercentFormatter(1, decimals=1))
+    ax.tick_params(axis="y", labelsize=fs)
+    ax.set_title(title)
+    ax.set_xlabel("Fraud Rate (95% CI)")
+    ax.set_ylabel("")
+    ax.legend(frameon=False)
+    plt.tight_layout()
+    plt.show()
+
+def top_low(g, col, unit):
+    s = g.sort_values("rate")
+    top, low = s.iloc[-1], s.iloc[0]
+    bullets(
+        f"Tertinggi: **{top[col]}** {top['rate']:.2%} "
+        f"({int(top['fraud'])} fraud dari {int(top['n']):,}).",
+        f"Terendah: **{low[col]}** {low['rate']:.2%}.",
+        f"{int((g['lo'] > baseline).sum())} dari {len(g)} {unit} punya "
+        "batas bawah CI di atas baseline global.",
+    )
+```
+
+```{python}
+#| output: asis
+print(f"# {country}\n")
+print(f"## Ringkasan {country}\n")
+bullets(
+    f"**{n_total:,}** transaksi, **{n_fraud:,}** fraud (**{rate:.2%}**).",
+    f"Baseline global **{baseline:.2%}**: {country} berada di "
+    f"**{rate / baseline:.2f}x** baseline.",
+    f"Dengan hanya {n_fraud:,} kasus fraud, segmen kecil berfluktuasi "
+    "besar; baca bersama CI.",
+)
+```
+
+## Distribution of Fraud
+:::: {.columns}
+::: {.column width="65%"}
+```{python}
+counts = df["is_fraud"].value_counts().reindex([0, 1], fill_value=0)
+pct = counts / counts.sum() * 100
+
+fig, ax = plt.subplots(figsize=(7, 4))
+bars = ax.bar(["Non-Fraud", "Fraud"], counts.values,
+              color=["#4C72B0", "#C44E52"])
+for bar, n, p in zip(bars, counts.values, pct.values):
+    ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+            f"{n:,}\n({p:.2f}%)", ha="center", va="bottom")
+ax.set_title(f"Distribusi Fraud Negara {country}")
+ax.set_ylabel("Jumlah transaksi")
+ax.set_ylim(0, counts.max() * 1.15)
+plt.show()
+```
+:::
+::: {.column width="35%"}
+```{python}
+#| output: asis
+lo, hi = wilson(n_fraud, n_total)
+bullets(
+    "Data sangat imbalanced.",
+    f"Fraud rate **{rate:.2%}** (CI 95%: {lo:.2%}-{hi:.2%}).",
+    f"Baseline global {baseline:.2%}: "
+    + ("CI mencakup baseline, selisih belum bermakna."
+       if lo <= baseline <= hi else
+       ("di atas baseline." if lo > baseline else "di bawah baseline.")),
+)
+```
+:::
+::: {.notes}
+- Baseline global dipakai untuk menghitung lift tiap segmen
+:::
+::::
+
+## Amount Distribution
+:::: {.columns}
+::: {.column width="65%"}
+```{python}
+loss = fraud_data["fraud_amount_lost"]
+median_loss = loss.median()
+p75_loss = loss.quantile(0.75)
+hv, edges = np.histogram(loss, bins=40)
+peak = (edges[hv.argmax()] + edges[hv.argmax() + 1]) / 2
+
+fig, ax = plt.subplots(figsize=(7, 4))
+sns.histplot(data=fraud_data, x="fraud_amount_lost", bins=40, kde=True,
+             color="#E76F51", edgecolor="white", alpha=0.8, ax=ax)
+ax.axvline(peak, color="#2A9D8F", ls="--", lw=2,
+           label=f"Peak: ${peak:,.0f}")
+ax.axvline(median_loss, color="#264653", ls="-.", lw=2,
+           label=f"Median: ${median_loss:,.0f}")
+ax.axvline(p75_loss, color="#FF392E", ls="--", lw=2,
+           label=f"P75: ${p75_loss:,.0f}")
+ax.set_title(f"Distribution of Fraud Amount Lost - {country}")
+ax.set_xlabel("Fraud Amount Lost ($)")
+ax.set_ylabel("Number of Fraud Transactions")
+ax.legend(frameon=False)
+plt.tight_layout()
+plt.show()
+```
+:::
+::: {.column width="35%"}
+```{python}
+#| output: asis
+bullets(
+    f"Total kerugian **\\${loss.sum():,.0f}**.",
+    f"Puncak distribusi sekitar \\${peak:,.0f}, median \\${median_loss:,.0f}.",
+    f"Kerugian terbesar \\${loss.max():,.0f}.",
+    f"Median global \\${df_all.loc[df_all['is_fraud'] == 1, 'fraud_amount_lost'].median():,.0f}.",
+)
+```
+:::
+::::
+
+## Transaction Amount: Fraud vs Non-Fraud
+:::: {.columns}
+::: {.column width="65%"}
+```{python}
+plot_df = df.assign(kelas=df["is_fraud"].map({0: "Non-Fraud", 1: "Fraud"}))
+fig, ax = plt.subplots(figsize=(7, 4))
+sns.boxplot(data=plot_df, x="kelas", y="transaction_amount",
+            order=["Non-Fraud", "Fraud"], log_scale=True,
+            palette=["#4C72B0", "#C44E52"], hue="kelas", legend=False,
+            ax=ax)
+ax.set_title(f"Transaction Amount by Class (log) - {country}")
+ax.set_xlabel("")
+ax.set_ylabel("Amount ($, log)")
+plt.tight_layout()
+plt.show()
+```
+:::
+::: {.column width="35%"}
+```{python}
+#| output: asis
+med = df.groupby("is_fraud")["transaction_amount"].median()
+bullets(
+    f"Median non-fraud \\${med[0]:,.2f}.",
+    f"Median fraud \\${med[1]:,.2f} ({med[1] / med[0]:.1f}x).",
+)
+```
+:::
+::::
+
+## Fraud Rate by Time of Day
+:::: {.columns}
+::: {.column width="65%"}
+```{python}
+blocks = pd.cut(df["transaction_hour"], bins=[-1, 5, 11, 17, 23],
+                labels=["00-05", "06-11", "12-17", "18-23"])
+g = rate_table(df.assign(blok=blocks), "blok")
+
+fig, ax = plt.subplots(figsize=(7, 4))
+ax.bar(g["blok"].astype(str), g["rate"], color="#4C72B0")
+ax.errorbar(np.arange(len(g)), g["rate"],
+            yerr=[(g["rate"] - g["lo"]).values,
+                  (g["hi"] - g["rate"]).values],
+            fmt="none", ecolor="black", capsize=3, lw=1)
+ax.axhline(baseline, ls="--", color="#C44E52",
+           label=f"Baseline global {baseline:.2%}")
+ax.yaxis.set_major_formatter(PercentFormatter(1, decimals=1))
+ax.set_title(f"Fraud Rate by Time Block - {country}")
+ax.set_xlabel("Jam")
+ax.set_ylabel("Fraud Rate (95% CI)")
+ax.legend(frameon=False)
+plt.tight_layout()
+plt.show()
+```
+:::
+::: {.column width="35%"}
+```{python}
+#| output: asis
+top_low(g, "blok", "blok waktu")
+```
+:::
+::: {.notes}
+- Jam dikelompokkan per 6 jam: per jam, fraud per segmen terlalu sedikit di negara kecil
+:::
+::::
+
+## Fraud Rate by Merchant Category
+:::: {.columns}
+::: {.column width="65%"}
+```{python}
+g = rate_table(df, "merchant_category")
+plot_rate(g, "merchant_category", f"Fraud Rate by Category - {country}",
+          figsize=(7, 5), fs=8)
+```
+:::
+::: {.column width="35%"}
+```{python}
+#| output: asis
+top_low(g, "merchant_category", "kategori")
+```
+:::
+::: {.notes}
+- Kategori dengan < 30 transaksi tidak ditampilkan
+:::
+::::
+
+## Fraud Rate by Channel
+:::: {.columns}
+::: {.column width="65%"}
+```{python}
+g = rate_table(df, "transaction_channel")
+plot_rate(g, "transaction_channel", f"Fraud Rate by Channel - {country}",
+          figsize=(7, 4))
+```
+:::
+::: {.column width="35%"}
+```{python}
+#| output: asis
+top_low(g, "transaction_channel", "channel")
+```
+:::
+::::
+
+## Fraud Type: Cases vs Loss
+:::: {.columns}
+::: {.column width="65%"}
+```{python}
+ft = (fraud_data.groupby("fraud_type")["fraud_amount_lost"]
+      .agg(n="size", total="sum")
+      .sort_values("total", ascending=False))
+ft["share_n"] = ft["n"] / ft["n"].sum()
+ft["share_loss"] = ft["total"] / ft["total"].sum()
+
+fig, ax = plt.subplots(figsize=(7, 4))
+ft[["share_n", "share_loss"]].plot.barh(
+    ax=ax, color=["#4C72B0", "#C44E52"])
+ax.invert_yaxis()
+ax.xaxis.set_major_formatter(PercentFormatter(1, decimals=0))
+ax.set_title(f"Share of Cases vs Loss - {country}")
+ax.set_xlabel("Share")
+ax.set_ylabel("")
+ax.legend(["Cases", "Loss"], frameon=False)
+plt.tight_layout()
+plt.show()
+```
+:::
+::: {.column width="35%"}
+```{python}
+#| output: asis
+t = ft.index[0]
+bullets(
+    f"Penyumbang kerugian terbesar: **{t}** "
+    f"({ft.loc[t, 'share_loss']:.1%} loss, "
+    f"{ft.loc[t, 'share_n']:.1%} kasus).",
+    f"Total hanya {int(ft['n'].sum())} kasus fraud: pola ini rapuh.",
+)
+```
+:::
+::::
